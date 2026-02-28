@@ -16,6 +16,7 @@ async def log_event(
     before_state: Optional[dict] = None,
     after_state: Optional[dict] = None,
     metadata: Optional[dict] = None,
+    broker_id: Optional[int] = None,
 ):
     entry = AuditLog(
         actor_type=actor_type,
@@ -27,6 +28,7 @@ async def log_event(
         before_state=before_state,
         after_state=after_state,
         metadata_=metadata,
+        broker_id=broker_id,
     )
     db.add(entry)
     await db.flush()

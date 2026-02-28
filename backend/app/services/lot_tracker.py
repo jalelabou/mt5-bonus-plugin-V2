@@ -1,19 +1,23 @@
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.interface import MT5Deal
-from app.gateway import gateway
+from app.gateway.registry import gateway_registry
 from app.models.audit_log import EventType
 from app.models.bonus import Bonus, BonusLotProgress, BonusStatus
 from app.models.campaign import Campaign, LotTrackingScope
 from app.services.audit_service import log_event
 
 
-async def process_deal(db: AsyncSession, bonus: Bonus, deal: MT5Deal) -> bool:
+async def process_deal(db: AsyncSession, bonus: Bonus, deal: MT5Deal, broker_id: Optional[int] = None) -> bool:
     if bonus.status != BonusStatus.ACTIVE or bonus.bonus_type != "C":
         return False
+
+    _broker_id = broker_id or bonus.broker_id
+    gw = gateway_registry.require_gateway(_broker_id)
 
     campaign = await db.get(Campaign, bonus.campaign_id)
     if not campaign:
@@ -38,11 +42,12 @@ async def process_deal(db: AsyncSession, bonus: Bonus, deal: MT5Deal) -> bool:
         return False
 
     # Execute conversion: remove credit, add to balance
-    await gateway.remove_credit(bonus.mt5_login, convert_amount, f"Convert lot {deal.deal_id}")
-    await gateway.deposit_to_balance(bonus.mt5_login, convert_amount, f"Convert lot {deal.deal_id}")
+    await gw.remove_credit(bonus.mt5_login, convert_amount, f"Convert lot {deal.deal_id}")
+    await gw.deposit_to_balance(bonus.mt5_login, convert_amount, f"Convert lot {deal.deal_id}")
 
     # Record progress
     progress = BonusLotProgress(
+        broker_id=_broker_id,
         bonus_id=bonus.id,
         deal_id=deal.deal_id,
         symbol=deal.symbol,
@@ -75,13 +80,17 @@ async def process_deal(db: AsyncSession, bonus: Bonus, deal: MT5Deal) -> bool:
             "total_lots": bonus.lots_traded,
             "fully_converted": bonus.status == BonusStatus.CONVERTED,
         },
+        broker_id=_broker_id,
     )
     return True
 
 
-async def handle_withdrawal(db: AsyncSession, bonus: Bonus, withdrawal_amount: float) -> bool:
+async def handle_withdrawal(db: AsyncSession, bonus: Bonus, withdrawal_amount: float, broker_id: Optional[int] = None) -> bool:
     if bonus.status != BonusStatus.ACTIVE or bonus.bonus_type != "C":
         return False
+
+    _broker_id = broker_id or bonus.broker_id
+    gw = gateway_registry.require_gateway(_broker_id)
 
     remaining_credit = bonus.bonus_amount - bonus.amount_converted
     if remaining_credit <= 0:
@@ -93,7 +102,7 @@ async def handle_withdrawal(db: AsyncSession, bonus: Bonus, withdrawal_amount: f
         "remaining_credit": remaining_credit,
     }
 
-    await gateway.remove_credit(
+    await gw.remove_credit(
         bonus.mt5_login, remaining_credit, f"Withdrawal cancellation"
     )
 
@@ -115,6 +124,7 @@ async def handle_withdrawal(db: AsyncSession, bonus: Bonus, withdrawal_amount: f
             "withdrawal_amount": withdrawal_amount,
             "cancelled_credit": remaining_credit,
         },
+        broker_id=_broker_id,
     )
     return True
 

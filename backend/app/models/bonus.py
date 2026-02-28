@@ -19,6 +19,7 @@ class Bonus(TimestampMixin, Base):
     __tablename__ = "bonuses"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), index=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True)
     mt5_login: Mapped[str] = mapped_column(String(50), index=True)
     bonus_type: Mapped[str] = mapped_column(String(1))  # A, B, or C
@@ -56,6 +57,7 @@ class BonusLotProgress(Base):
     __tablename__ = "bonus_lot_progress"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), index=True)
     bonus_id: Mapped[int] = mapped_column(ForeignKey("bonuses.id"), index=True)
     deal_id: Mapped[str] = mapped_column(String(50))
     symbol: Mapped[str] = mapped_column(String(50))

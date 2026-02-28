@@ -28,8 +28,14 @@ async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(get_current_user),
 ):
+    broker_id = user.broker_id
     query = select(AuditLog)
     count_query = select(func.count(AuditLog.id))
+
+    # Scope to broker
+    if broker_id:
+        query = query.where(AuditLog.broker_id == broker_id)
+        count_query = count_query.where(AuditLog.broker_id == broker_id)
 
     if mt5_login:
         query = query.where(AuditLog.mt5_login == mt5_login)

@@ -32,8 +32,10 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
 
-    access_token = create_access_token({"sub": str(user.id)})
-    refresh_token = create_refresh_token({"sub": str(user.id)})
+    # Include broker_id in JWT for downstream use
+    token_data = {"sub": str(user.id), "broker_id": user.broker_id}
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -53,8 +55,9 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    access_token = create_access_token({"sub": str(user.id)})
-    refresh_token = create_refresh_token({"sub": str(user.id)})
+    token_data = {"sub": str(user.id), "broker_id": user.broker_id}
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,

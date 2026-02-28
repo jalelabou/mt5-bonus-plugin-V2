@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.database import get_db
-from app.gateway import gateway
+from app.gateway.registry import gateway_registry
 from app.models.bonus import Bonus, BonusLotProgress, BonusStatus
 from app.models.campaign import Campaign
 from app.models.user import AdminRole, AdminUser
@@ -36,8 +36,14 @@ async def list_bonuses(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(get_current_user),
 ):
+    broker_id = user.broker_id
     query = select(Bonus, Campaign.name).join(Campaign, Bonus.campaign_id == Campaign.id)
     count_query = select(func.count(Bonus.id))
+
+    # Scope to broker
+    if broker_id:
+        query = query.where(Bonus.broker_id == broker_id)
+        count_query = count_query.where(Bonus.broker_id == broker_id)
 
     if campaign_id:
         query = query.where(Bonus.campaign_id == campaign_id)
@@ -81,11 +87,15 @@ async def get_bonus(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(get_current_user),
 ):
-    result = await db.execute(
+    broker_id = user.broker_id
+    query = (
         select(Bonus, Campaign.name)
         .join(Campaign, Bonus.campaign_id == Campaign.id)
         .where(Bonus.id == bonus_id)
     )
+    if broker_id:
+        query = query.where(Bonus.broker_id == broker_id)
+    result = await db.execute(query)
     row = result.one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Bonus not found")
@@ -114,16 +124,20 @@ async def assign_bonus_manual(
         AdminRole.SUPER_ADMIN, AdminRole.CAMPAIGN_MANAGER, AdminRole.SUPPORT_AGENT
     )),
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == body.campaign_id))
+    broker_id = user.broker_id
+    query = select(Campaign).where(Campaign.id == body.campaign_id)
+    if broker_id:
+        query = query.where(Campaign.broker_id == broker_id)
+    result = await db.execute(query)
     campaign = result.scalar_one_or_none()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    eligible, reason = await check_eligibility(db, campaign, body.mt5_login, body.deposit_amount)
+    eligible, reason = await check_eligibility(db, campaign, body.mt5_login, body.deposit_amount, broker_id=broker_id)
     if not eligible:
         raise HTTPException(status_code=400, detail=reason)
 
-    bonus = await assign_bonus(db, campaign, body.mt5_login, body.deposit_amount, actor_id=user.id)
+    bonus = await assign_bonus(db, campaign, body.mt5_login, body.deposit_amount, actor_id=user.id, broker_id=broker_id)
     item = BonusRead.model_validate(bonus)
     item.campaign_name = campaign.name
     return item
@@ -136,13 +150,16 @@ async def cancel_bonus_endpoint(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_roles(AdminRole.SUPER_ADMIN, AdminRole.CAMPAIGN_MANAGER)),
 ):
+    broker_id = user.broker_id
     bonus = await db.get(Bonus, bonus_id)
     if not bonus:
+        raise HTTPException(status_code=404, detail="Bonus not found")
+    if broker_id and bonus.broker_id != broker_id:
         raise HTTPException(status_code=404, detail="Bonus not found")
     if bonus.status != BonusStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Bonus is not active")
 
-    bonus = await cancel_bonus(db, bonus, body.reason, actor_id=user.id)
+    bonus = await cancel_bonus(db, bonus, body.reason, actor_id=user.id, broker_id=broker_id)
     return BonusRead.model_validate(bonus)
 
 
@@ -152,16 +169,20 @@ async def force_convert(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_roles(AdminRole.SUPER_ADMIN)),
 ):
+    broker_id = user.broker_id
     bonus = await db.get(Bonus, bonus_id)
     if not bonus:
+        raise HTTPException(status_code=404, detail="Bonus not found")
+    if broker_id and bonus.broker_id != broker_id:
         raise HTTPException(status_code=404, detail="Bonus not found")
     if bonus.bonus_type != "C" or bonus.status != BonusStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Not an active Type C bonus")
 
+    gw = gateway_registry.require_gateway(bonus.broker_id)
     remaining = bonus.bonus_amount - bonus.amount_converted
     if remaining > 0:
-        await gateway.remove_credit(bonus.mt5_login, remaining, "Force convert")
-        await gateway.deposit_to_balance(bonus.mt5_login, remaining, "Force convert")
+        await gw.remove_credit(bonus.mt5_login, remaining, "Force convert")
+        await gw.deposit_to_balance(bonus.mt5_login, remaining, "Force convert")
 
     bonus.amount_converted = bonus.bonus_amount
     bonus.lots_traded = bonus.lots_required or bonus.lots_traded
@@ -177,13 +198,17 @@ async def override_leverage(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_roles(AdminRole.SUPER_ADMIN)),
 ):
+    broker_id = user.broker_id
     bonus = await db.get(Bonus, bonus_id)
     if not bonus:
+        raise HTTPException(status_code=404, detail="Bonus not found")
+    if broker_id and bonus.broker_id != broker_id:
         raise HTTPException(status_code=404, detail="Bonus not found")
     if bonus.bonus_type != "A":
         raise HTTPException(status_code=400, detail="Not a Type A bonus")
 
-    await gateway.set_leverage(bonus.mt5_login, body.new_leverage)
+    gw = gateway_registry.require_gateway(bonus.broker_id)
+    await gw.set_leverage(bonus.mt5_login, body.new_leverage)
     bonus.adjusted_leverage = body.new_leverage
     await db.flush()
     return BonusRead.model_validate(bonus)

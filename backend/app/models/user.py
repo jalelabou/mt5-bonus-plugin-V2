@@ -1,8 +1,8 @@
 import enum
 from typing import Optional
 
-from sqlalchemy import String, Boolean, Enum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, Boolean, Enum, ForeignKey, Integer
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
 
@@ -24,3 +24,15 @@ class AdminUser(TimestampMixin, Base):
     role: Mapped[AdminRole] = mapped_column(Enum(AdminRole), default=AdminRole.READ_ONLY)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     totp_secret: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Multi-tenancy: NULL = platform super admin, set = broker user
+    broker_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("brokers.id"), nullable=True, index=True
+    )
+    is_broker_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    broker = relationship("Broker", foreign_keys=[broker_id])
+
+    @property
+    def is_platform_admin(self) -> bool:
+        return self.broker_id is None and self.role == AdminRole.SUPER_ADMIN

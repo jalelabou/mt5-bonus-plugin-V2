@@ -13,6 +13,7 @@ async def get_bonus_summary(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     campaign_id: Optional[int] = None,
+    broker_id: Optional[int] = None,
 ) -> List[dict]:
     query = (
         select(
@@ -30,6 +31,8 @@ async def get_bonus_summary(
         .group_by(Campaign.id, Campaign.name, Campaign.bonus_type)
     )
 
+    if broker_id:
+        query = query.where(Campaign.broker_id == broker_id)
     if date_from:
         query = query.where(Bonus.assigned_at >= date_from)
     if date_to:
@@ -59,12 +62,15 @@ async def get_bonus_summary(
 async def get_conversion_progress(
     db: AsyncSession,
     campaign_id: Optional[int] = None,
+    broker_id: Optional[int] = None,
 ) -> List[dict]:
     query = (
         select(Bonus, Campaign.name)
         .join(Campaign, Bonus.campaign_id == Campaign.id)
         .where(Bonus.bonus_type == "C", Bonus.status == BonusStatus.ACTIVE)
     )
+    if broker_id:
+        query = query.where(Bonus.broker_id == broker_id)
     if campaign_id:
         query = query.where(Bonus.campaign_id == campaign_id)
 
@@ -95,12 +101,15 @@ async def get_cancellation_report(
     db: AsyncSession,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    broker_id: Optional[int] = None,
 ) -> List[dict]:
     query = (
         select(Bonus, Campaign.name)
         .join(Campaign, Bonus.campaign_id == Campaign.id)
         .where(Bonus.status == BonusStatus.CANCELLED)
     )
+    if broker_id:
+        query = query.where(Bonus.broker_id == broker_id)
     if date_from:
         query = query.where(Bonus.cancelled_at >= date_from)
     if date_to:
@@ -122,12 +131,17 @@ async def get_cancellation_report(
     ]
 
 
-async def get_leverage_report(db: AsyncSession) -> List[dict]:
+async def get_leverage_report(
+    db: AsyncSession,
+    broker_id: Optional[int] = None,
+) -> List[dict]:
     query = (
         select(Bonus, Campaign.name)
         .join(Campaign, Bonus.campaign_id == Campaign.id)
         .where(Bonus.bonus_type == "A", Bonus.original_leverage.isnot(None))
     )
+    if broker_id:
+        query = query.where(Bonus.broker_id == broker_id)
     result = await db.execute(query)
     rows = result.all()
 

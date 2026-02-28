@@ -2,12 +2,16 @@ import api from "./client";
 import type {
   Bonus,
   BonusDetail,
+  Broker,
+  BrokerCreate,
+  BrokerAdminCreate,
   Campaign,
   CampaignListItem,
   PaginatedResponse,
   TokenResponse,
   AuditLogEntry,
   User,
+  UserCreate,
 } from "../types";
 
 // Auth
@@ -90,6 +94,41 @@ export const triggerRegistration = (mt5_login: string) =>
 
 export const triggerPromoCode = (mt5_login: string, promo_code: string, deposit_amount?: number) =>
   api.post("/triggers/promo-code", { mt5_login, promo_code, deposit_amount });
+
+// Platform — Broker Management (Super Admin only)
+export const getPlatformBrokers = () =>
+  api.get<Broker[]>("/platform/brokers");
+
+export const createPlatformBroker = (data: BrokerCreate) =>
+  api.post<Broker>("/platform/brokers", data);
+
+export const getPlatformBroker = (id: number) =>
+  api.get<Broker>(`/platform/brokers/${id}`);
+
+export const updatePlatformBroker = (id: number, data: Partial<BrokerCreate>) =>
+  api.put<Broker>(`/platform/brokers/${id}`, data);
+
+export const toggleBrokerStatus = (id: number) =>
+  api.patch<Broker>(`/platform/brokers/${id}/status`);
+
+export const createBrokerAdmin = (brokerId: number, data: BrokerAdminCreate) =>
+  api.post<User>(`/platform/brokers/${brokerId}/admin`, data);
+
+export const getBrokerAdmins = (brokerId: number) =>
+  api.get<User[]>(`/platform/brokers/${brokerId}/admins`);
+
+// User Management (Broker Admin)
+export const getUsers = () =>
+  api.get<User[]>("/users");
+
+export const createUser = (data: UserCreate) =>
+  api.post<User>("/users", data);
+
+export const updateUser = (id: number, data: Partial<{ full_name: string; role: string; is_active: boolean }>) =>
+  api.put<User>(`/users/${id}`, data);
+
+export const deactivateUser = (id: number) =>
+  api.delete(`/users/${id}`);
 
 // Health
 export const getHealth = () => api.get<{ status: string; scheduler_running: boolean }>("/health");

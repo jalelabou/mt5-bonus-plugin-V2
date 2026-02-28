@@ -1,6 +1,8 @@
 import enum
 from datetime import datetime, timezone
 
+from typing import Optional
+
 from sqlalchemy import String, Integer, Enum, DateTime, ForeignKey, Index
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,6 +28,9 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    broker_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("brokers.id"), nullable=True, index=True
+    )
     actor_type: Mapped[ActorType] = mapped_column(Enum(ActorType))
     actor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mt5_login: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)

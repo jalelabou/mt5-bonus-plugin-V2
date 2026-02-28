@@ -80,9 +80,13 @@ class Campaign(TimestampMixin, Base):
     # Notes
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Multi-tenancy
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), index=True)
+
     # Relations
     created_by_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("admin_users.id"), nullable=True
     )
     created_by = relationship("AdminUser", foreign_keys=[created_by_id])
+    broker = relationship("Broker", foreign_keys=[broker_id])
     bonuses = relationship("Bonus", back_populates="campaign")

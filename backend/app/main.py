@@ -3,9 +3,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
 
 from app.config.settings import settings
-from app.api import auth, campaigns, bonuses, accounts, reports, audit, triggers, monitoring
+from app.api import auth, campaigns, bonuses, accounts, reports, audit, triggers, monitoring, platform, users
+from app.middleware.broker_context import BrokerContextMiddleware
 from app.tasks.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -14,26 +16,50 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from app.gateway import gateway
-    if hasattr(gateway, "connect"):
-        try:
-            await gateway.connect()
-        except Exception:
-            logger.exception("Failed to connect MT5 gateway at startup")
+    from app.gateway.registry import gateway_registry
+    from app.db.database import async_session
+    from app.models.broker import Broker
+
+    # Register gateways for all active brokers
+    async with async_session() as db:
+        result = await db.execute(
+            select(Broker).where(Broker.is_active == True)
+        )
+        brokers = result.scalars().all()
+
+    for broker in brokers:
+        if broker.mt5_configured:
+            try:
+                await gateway_registry.register_broker(
+                    broker_id=broker.id,
+                    bridge_url=broker.mt5_bridge_url,
+                    mt5_server=broker.mt5_server,
+                    manager_login=broker.mt5_manager_login,
+                    manager_password=broker.mt5_manager_password,
+                )
+            except Exception:
+                logger.exception("Failed to connect gateway for broker %d (%s)", broker.id, broker.slug)
+        else:
+            # No MT5 creds configured — register mock for dev
+            gateway_registry.register_mock(broker.id)
+            logger.info("Broker %d (%s) has no MT5 config, using mock gateway", broker.id, broker.slug)
+
+    logger.info("Gateway registry initialized: %d brokers", len(gateway_registry))
+
     start_scheduler()
     yield
     stop_scheduler()
-    if hasattr(gateway, "disconnect"):
-        await gateway.disconnect()
+    await gateway_registry.shutdown_all()
 
 
 app = FastAPI(
     title="MT5 Bonus Plugin",
-    description="Broker-side bonus campaign management for MetaTrader 5",
-    version="1.0.0",
+    description="Multi-tenant broker bonus campaign management for MetaTrader 5",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
+app.add_middleware(BrokerContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -51,37 +77,21 @@ app.include_router(reports.router)
 app.include_router(audit.router)
 app.include_router(triggers.router)
 app.include_router(monitoring.router)
+app.include_router(platform.router)
+app.include_router(users.router)
 
 
 @app.get("/api/health")
 async def health():
     from app.tasks.scheduler import scheduler
-    from app.gateway import gateway
+    from app.gateway.registry import gateway_registry
+
     monitor_job = scheduler.get_job("account_monitor")
     return {
         "status": "ok",
-        "service": "mt5-bonus-plugin",
+        "service": "mt5-bonus-plugin-v2",
         "scheduler_running": scheduler.running,
-        "gateway_mode": "real" if hasattr(gateway, "connect") else "mock",
+        "active_brokers": len(gateway_registry),
+        "broker_ids": gateway_registry.get_all_broker_ids(),
         "monitor_active": monitor_job is not None,
     }
-
-
-@app.get("/api/gateway/accounts")
-async def list_gateway_accounts():
-    from app.gateway import gateway
-    if hasattr(gateway, "accounts"):
-        return {
-            login: {
-                "login": acct.login,
-                "name": acct.name,
-                "balance": acct.balance,
-                "equity": acct.equity,
-                "credit": acct.credit,
-                "leverage": acct.leverage,
-                "group": acct.group,
-                "country": acct.country,
-            }
-            for login, acct in gateway.accounts.items()
-        }
-    return {"message": "Account listing not available in real MT5 mode. Use /api/accounts/{login} instead."}

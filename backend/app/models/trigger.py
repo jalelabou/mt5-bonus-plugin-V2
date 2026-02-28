@@ -2,7 +2,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import String, Enum, DateTime, ForeignKey
+from sqlalchemy import String, Integer, Enum, DateTime, ForeignKey
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +20,7 @@ class TriggerEvent(Base):
     __tablename__ = "trigger_events"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), index=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"), index=True)
     mt5_login: Mapped[str] = mapped_column(String(50), index=True)
     trigger_type: Mapped[str] = mapped_column(String(50))

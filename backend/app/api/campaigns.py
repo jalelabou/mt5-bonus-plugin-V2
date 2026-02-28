@@ -33,8 +33,14 @@ async def list_campaigns(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(get_current_user),
 ):
+    broker_id = user.broker_id
     query = select(Campaign)
     count_query = select(func.count(Campaign.id))
+
+    # Scope to broker
+    if broker_id:
+        query = query.where(Campaign.broker_id == broker_id)
+        count_query = count_query.where(Campaign.broker_id == broker_id)
 
     if status_filter:
         query = query.where(Campaign.status == status_filter)
@@ -77,7 +83,10 @@ async def create_campaign(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_roles(*WRITE_ROLES)),
 ):
-    campaign = Campaign(**body.model_dump(), created_by_id=user.id)
+    broker_id = user.broker_id
+    if not broker_id:
+        raise HTTPException(status_code=400, detail="No broker context")
+    campaign = Campaign(**body.model_dump(), created_by_id=user.id, broker_id=broker_id)
     db.add(campaign)
     await db.flush()
     await db.refresh(campaign)
@@ -90,7 +99,11 @@ async def get_campaign(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(get_current_user),
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+    broker_id = user.broker_id
+    query = select(Campaign).where(Campaign.id == campaign_id)
+    if broker_id:
+        query = query.where(Campaign.broker_id == broker_id)
+    result = await db.execute(query)
     campaign = result.scalar_one_or_none()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -111,7 +124,11 @@ async def update_campaign(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_roles(*WRITE_ROLES)),
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+    broker_id = user.broker_id
+    query = select(Campaign).where(Campaign.id == campaign_id)
+    if broker_id:
+        query = query.where(Campaign.broker_id == broker_id)
+    result = await db.execute(query)
     campaign = result.scalar_one_or_none()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -131,7 +148,11 @@ async def duplicate_campaign(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_roles(*WRITE_ROLES)),
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+    broker_id = user.broker_id
+    query = select(Campaign).where(Campaign.id == campaign_id)
+    if broker_id:
+        query = query.where(Campaign.broker_id == broker_id)
+    result = await db.execute(query)
     original = result.scalar_one_or_none()
     if not original:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -159,7 +180,11 @@ async def update_campaign_status(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_roles(*WRITE_ROLES)),
 ):
-    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+    broker_id = user.broker_id
+    query = select(Campaign).where(Campaign.id == campaign_id)
+    if broker_id:
+        query = query.where(Campaign.broker_id == broker_id)
+    result = await db.execute(query)
     campaign = result.scalar_one_or_none()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")

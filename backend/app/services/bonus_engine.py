@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.gateway import gateway
+from app.gateway.registry import gateway_registry
 from app.models.audit_log import ActorType, EventType
 from app.models.bonus import Bonus, BonusStatus
 from app.models.campaign import Campaign, CampaignStatus
@@ -18,8 +18,12 @@ async def assign_bonus(
     mt5_login: str,
     deposit_amount: Optional[float] = None,
     actor_id: Optional[int] = None,
+    broker_id: Optional[int] = None,
 ) -> Bonus:
-    account = await gateway.get_account_info(mt5_login)
+    _broker_id = broker_id or campaign.broker_id
+    gw = gateway_registry.require_gateway(_broker_id)
+
+    account = await gw.get_account_info(mt5_login)
     if not account:
         raise ValueError(f"MT5 account {mt5_login} not found")
 
@@ -31,7 +35,7 @@ async def assign_bonus(
         bonus_amount = campaign.max_bonus_amount
 
     # Post credit to MT5
-    success = await gateway.post_credit(mt5_login, bonus_amount, f"Bonus: {campaign.name}")
+    success = await gw.post_credit(mt5_login, bonus_amount, f"Bonus: {campaign.name}")
     if not success:
         raise RuntimeError(f"Failed to post credit to {mt5_login}")
 
@@ -41,7 +45,7 @@ async def assign_bonus(
     if campaign.bonus_type.value == "A":
         original_leverage = account.leverage
         adjusted_leverage = await apply_leverage_reduction(
-            gateway, mt5_login, original_leverage, campaign.bonus_percentage
+            gw, mt5_login, original_leverage, campaign.bonus_percentage
         )
 
     # Calculate expiry
@@ -51,6 +55,7 @@ async def assign_bonus(
 
     now = datetime.now(timezone.utc)
     bonus = Bonus(
+        broker_id=_broker_id,
         campaign_id=campaign.id,
         mt5_login=mt5_login,
         bonus_type=campaign.bonus_type.value,
@@ -82,11 +87,12 @@ async def assign_bonus(
             "original_leverage": original_leverage,
             "adjusted_leverage": adjusted_leverage,
         },
+        broker_id=_broker_id,
     )
 
     # Auto-register for monitoring
     from app.services.monitor_service import register_for_monitoring
-    await register_for_monitoring(db, mt5_login, reason="active_bonus")
+    await register_for_monitoring(db, mt5_login, reason="active_bonus", broker_id=_broker_id)
 
     return bonus
 
@@ -96,7 +102,11 @@ async def cancel_bonus(
     bonus: Bonus,
     reason: str = "admin_cancel",
     actor_id: Optional[int] = None,
+    broker_id: Optional[int] = None,
 ) -> Bonus:
+    _broker_id = broker_id or bonus.broker_id
+    gw = gateway_registry.require_gateway(_broker_id)
+
     before_state = {
         "status": bonus.status.value,
         "bonus_amount": bonus.bonus_amount,
@@ -105,10 +115,10 @@ async def cancel_bonus(
 
     remaining_credit = bonus.bonus_amount - bonus.amount_converted
     if remaining_credit > 0:
-        await gateway.remove_credit(bonus.mt5_login, remaining_credit, f"Cancel: {reason}")
+        await gw.remove_credit(bonus.mt5_login, remaining_credit, f"Cancel: {reason}")
 
     if bonus.bonus_type == "A" and bonus.original_leverage:
-        await restore_leverage(gateway, bonus.mt5_login, bonus.original_leverage)
+        await restore_leverage(gw, bonus.mt5_login, bonus.original_leverage)
         await log_event(
             db,
             event_type=EventType.LEVERAGE_CHANGE,
@@ -117,6 +127,7 @@ async def cancel_bonus(
             bonus_id=bonus.id,
             before_state={"leverage": bonus.adjusted_leverage},
             after_state={"leverage": bonus.original_leverage},
+            broker_id=_broker_id,
         )
 
     bonus.status = BonusStatus.CANCELLED
@@ -134,17 +145,18 @@ async def cancel_bonus(
         actor_id=actor_id,
         before_state=before_state,
         after_state={"status": "cancelled", "reason": reason},
+        broker_id=_broker_id,
     )
 
     # Auto-unregister if no active bonuses remain
     from app.services.monitor_service import unregister_if_no_bonuses
-    await unregister_if_no_bonuses(db, bonus.mt5_login)
+    await unregister_if_no_bonuses(db, bonus.mt5_login, broker_id=_broker_id)
 
     return bonus
 
 
 async def expire_bonus(db: AsyncSession, bonus: Bonus) -> Bonus:
-    return await cancel_bonus(db, bonus, reason="expired")
+    return await cancel_bonus(db, bonus, reason="expired", broker_id=bonus.broker_id)
 
 
 async def check_eligibility(
@@ -152,7 +164,11 @@ async def check_eligibility(
     campaign: Campaign,
     mt5_login: str,
     deposit_amount: Optional[float] = None,
+    broker_id: Optional[int] = None,
 ) -> tuple[bool, str]:
+    _broker_id = broker_id or campaign.broker_id
+    gw = gateway_registry.require_gateway(_broker_id)
+
     if campaign.status != CampaignStatus.ACTIVE:
         return False, "Campaign is not active"
 
@@ -163,7 +179,7 @@ async def check_eligibility(
         if datetime.now(timezone.utc) > end:
             return False, "Campaign has ended"
 
-    account = await gateway.get_account_info(mt5_login)
+    account = await gw.get_account_info(mt5_login)
     if not account:
         return False, "MT5 account not found"
 

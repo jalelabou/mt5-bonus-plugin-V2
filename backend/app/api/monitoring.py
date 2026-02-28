@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.database import get_db
+from app.gateway.registry import gateway_registry
 from app.models.monitored_account import MonitoredAccount
 from app.models.user import AdminRole, AdminUser
 from app.services.monitor_service import register_for_monitoring
@@ -17,7 +18,10 @@ async def list_monitored_accounts(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(get_current_user),
 ):
+    broker_id = user.broker_id
     query = select(MonitoredAccount)
+    if broker_id:
+        query = query.where(MonitoredAccount.broker_id == broker_id)
     if active_only:
         query = query.where(MonitoredAccount.is_active == True)  # noqa: E712
     query = query.order_by(MonitoredAccount.last_polled_at.desc())
@@ -33,7 +37,10 @@ async def register_account(
     user: AdminUser = Depends(require_roles(AdminRole.SUPER_ADMIN, AdminRole.CAMPAIGN_MANAGER)),
 ):
     """Manually register an account for deposit monitoring."""
-    mon = await register_for_monitoring(db, mt5_login, reason="deposit_watch")
+    broker_id = user.broker_id
+    if not broker_id:
+        raise HTTPException(status_code=400, detail="No broker context")
+    mon = await register_for_monitoring(db, mt5_login, reason="deposit_watch", broker_id=broker_id)
     await db.commit()
     return _serialize(mon)
 
@@ -45,9 +52,11 @@ async def reset_errors(
     user: AdminUser = Depends(require_roles(AdminRole.SUPER_ADMIN)),
 ):
     """Reset consecutive error counter for a stuck account."""
-    result = await db.execute(
-        select(MonitoredAccount).where(MonitoredAccount.mt5_login == mt5_login)
-    )
+    broker_id = user.broker_id
+    query = select(MonitoredAccount).where(MonitoredAccount.mt5_login == mt5_login)
+    if broker_id:
+        query = query.where(MonitoredAccount.broker_id == broker_id)
+    result = await db.execute(query)
     mon = result.scalar_one_or_none()
     if not mon:
         raise HTTPException(404, "Account not monitored")
@@ -65,18 +74,17 @@ async def monitoring_status(
 ):
     from app.tasks.scheduler import scheduler
 
-    total = (await db.execute(
-        select(func.count(MonitoredAccount.id))
-    )).scalar() or 0
+    broker_id = user.broker_id
+    base_q = select(func.count(MonitoredAccount.id))
+    if broker_id:
+        base_q = base_q.where(MonitoredAccount.broker_id == broker_id)
+
+    total = (await db.execute(base_q)).scalar() or 0
     active = (await db.execute(
-        select(func.count(MonitoredAccount.id)).where(
-            MonitoredAccount.is_active == True  # noqa: E712
-        )
+        base_q.where(MonitoredAccount.is_active == True)  # noqa: E712
     )).scalar() or 0
     errored = (await db.execute(
-        select(func.count(MonitoredAccount.id)).where(
-            MonitoredAccount.consecutive_errors >= 5
-        )
+        base_q.where(MonitoredAccount.consecutive_errors >= 5)
     )).scalar() or 0
 
     monitor_job = scheduler.get_job("account_monitor")
@@ -97,11 +105,17 @@ async def test_deposit(
     user: AdminUser = Depends(require_roles(AdminRole.SUPER_ADMIN)),
 ):
     """Deposit to MT5 balance (for testing auto-detection)."""
-    from app.gateway import gateway
-    ok = await gateway.deposit_to_balance(mt5_login, amount, f"Test deposit {amount}")
+    broker_id = user.broker_id
+    if not broker_id:
+        raise HTTPException(status_code=400, detail="No broker context")
+    gw = gateway_registry.get_gateway(broker_id)
+    if not gw:
+        raise HTTPException(status_code=503, detail="MT5 gateway not available")
+
+    ok = await gw.deposit_to_balance(mt5_login, amount, f"Test deposit {amount}")
     if not ok:
         raise HTTPException(500, "Deposit failed")
-    acct = await gateway.get_account_info(mt5_login)
+    acct = await gw.get_account_info(mt5_login)
     return {
         "success": True,
         "amount": amount,
@@ -119,11 +133,17 @@ async def test_withdraw(
     user: AdminUser = Depends(require_roles(AdminRole.SUPER_ADMIN)),
 ):
     """Withdraw from MT5 balance (for testing auto-detection)."""
-    from app.gateway import gateway
-    ok = await gateway.deposit_to_balance(mt5_login, -abs(amount), f"Test withdrawal {amount}")
+    broker_id = user.broker_id
+    if not broker_id:
+        raise HTTPException(status_code=400, detail="No broker context")
+    gw = gateway_registry.get_gateway(broker_id)
+    if not gw:
+        raise HTTPException(status_code=503, detail="MT5 gateway not available")
+
+    ok = await gw.deposit_to_balance(mt5_login, -abs(amount), f"Test withdrawal {amount}")
     if not ok:
         raise HTTPException(500, "Withdrawal failed")
-    acct = await gateway.get_account_info(mt5_login)
+    acct = await gw.get_account_info(mt5_login)
     return {
         "success": True,
         "amount": -abs(amount),
@@ -136,6 +156,7 @@ async def test_withdraw(
 def _serialize(mon: MonitoredAccount) -> dict:
     return {
         "mt5_login": mon.mt5_login,
+        "broker_id": mon.broker_id,
         "last_balance": mon.last_balance,
         "last_equity": mon.last_equity,
         "last_credit": mon.last_credit,

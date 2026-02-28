@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from app.models.user import AdminRole
 
@@ -25,6 +25,8 @@ class UserRead(BaseModel):
     full_name: str
     role: AdminRole
     is_active: bool
+    broker_id: Optional[int] = None
+    is_broker_admin: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

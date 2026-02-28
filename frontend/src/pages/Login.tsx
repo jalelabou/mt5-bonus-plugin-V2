@@ -3,10 +3,12 @@ import { Form, Input, Button, Card, Typography, message } from "antd";
 import { UserOutlined, LockOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useBroker } from "../context/BrokerContext";
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
+  const { isPlatform } = useBroker();
   const navigate = useNavigate();
 
   const onFinish = async (values: { email: string; password: string }) => {
@@ -25,9 +27,12 @@ export default function Login() {
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", background: "#f0f2f5" }}>
       <Card style={{ width: 400 }}>
-        <Typography.Title level={2} style={{ textAlign: "center", marginBottom: 32 }}>
-          MT5 Bonus Plugin
+        <Typography.Title level={2} style={{ textAlign: "center", marginBottom: 8 }}>
+          {isPlatform ? "Platform Admin" : "MT5 Bonus"}
         </Typography.Title>
+        <Typography.Text type="secondary" style={{ display: "block", textAlign: "center", marginBottom: 24 }}>
+          {isPlatform ? "Manage brokers and platform settings" : "Campaign & bonus management"}
+        </Typography.Text>
         <Form onFinish={onFinish} size="large">
           <Form.Item name="email" rules={[{ required: true, message: "Enter email" }]}>
             <Input prefix={<UserOutlined />} placeholder="Email" />

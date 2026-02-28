@@ -11,7 +11,49 @@ export interface User {
   full_name: string;
   role: AdminRole;
   is_active: boolean;
+  broker_id: number | null;
+  is_broker_admin: boolean;
   created_at: string;
+}
+
+export interface Broker {
+  id: number;
+  name: string;
+  slug: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  mt5_bridge_url: string | null;
+  mt5_server: string | null;
+  mt5_manager_login: string | null;
+  api_key: string | null;
+  is_active: boolean;
+  mt5_configured: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrokerCreate {
+  name: string;
+  slug: string;
+  contact_email?: string;
+  contact_phone?: string;
+  mt5_bridge_url?: string;
+  mt5_server?: string;
+  mt5_manager_login?: string;
+  mt5_manager_password?: string;
+}
+
+export interface BrokerAdminCreate {
+  email: string;
+  password: string;
+  full_name: string;
+}
+
+export interface UserCreate {
+  email: string;
+  password: string;
+  full_name: string;
+  role?: AdminRole;
 }
 
 export interface TokenResponse {

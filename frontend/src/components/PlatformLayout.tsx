@@ -1,44 +1,31 @@
 import { useState } from "react";
 import { Layout, Menu, Button, Dropdown, Space, Typography } from "antd";
 import {
-  DashboardOutlined,
-  FundOutlined,
-  GiftOutlined,
-  UserOutlined,
-  BarChartOutlined,
-  AuditOutlined,
+  BankOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  TeamOutlined,
+  UserOutlined,
+  GlobalOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 const { Header, Sider, Content } = Layout;
 
-export default function AppLayout() {
+export default function PlatformLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
 
   const menuItems = [
-    { key: "/", icon: <DashboardOutlined />, label: "Dashboard" },
-    { key: "/campaigns", icon: <FundOutlined />, label: "Campaigns" },
-    { key: "/bonuses", icon: <GiftOutlined />, label: "Bonus Monitor" },
-    { key: "/accounts", icon: <UserOutlined />, label: "Account Lookup" },
-    { key: "/reports", icon: <BarChartOutlined />, label: "Reports" },
-    { key: "/audit", icon: <AuditOutlined />, label: "Audit Log" },
-    // Show User Management only for Broker Admins
-    ...(user?.is_broker_admin
-      ? [{ key: "/settings/users", icon: <TeamOutlined />, label: "User Management" }]
-      : []),
+    { key: "/", icon: <BankOutlined />, label: "Brokers" },
   ];
 
   const userMenu = {
     items: [
-      { key: "role", label: `Role: ${user?.role?.replace("_", " ")}`, disabled: true },
+      { key: "role", label: "Platform Super Admin", disabled: true },
       { type: "divider" as const },
       { key: "logout", label: "Logout", icon: <LogoutOutlined />, danger: true },
     ],
@@ -54,9 +41,12 @@ export default function AppLayout() {
     <Layout style={{ minHeight: "100vh" }}>
       <Sider trigger={null} collapsible collapsed={collapsed} theme="dark">
         <div style={{ height: 64, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Typography.Title level={4} style={{ color: "#fff", margin: 0 }}>
-            {collapsed ? "MT5" : "MT5 Bonus"}
-          </Typography.Title>
+          <GlobalOutlined style={{ color: "#fff", fontSize: 20, marginRight: collapsed ? 0 : 8 }} />
+          {!collapsed && (
+            <Typography.Title level={4} style={{ color: "#fff", margin: 0 }}>
+              Platform
+            </Typography.Title>
+          )}
         </div>
         <Menu
           theme="dark"
